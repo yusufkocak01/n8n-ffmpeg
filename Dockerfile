@@ -12,5 +12,5 @@ COPY app.py .
 
 EXPOSE 8080
 
-# Gunicorn production-ready server
+# Gunicorn ile production-ready server
 CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:8080", "app:app"]
