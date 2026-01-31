@@ -1,16 +1,18 @@
-import os
-import subprocess
 from flask import Flask, request, jsonify
+import subprocess
+import uuid
+import os
 import boto3
 
 app = Flask(__name__)
 
-# Değişkenleri Railway Variables'tan çekiyoruz
+# Railway Variables kısmına girdiğin R2 bilgileri
 R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
 R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
 R2_BUCKET = os.environ.get("R2_BUCKET")
 
+# Cloudflare R2 Bağlantısı
 s3 = boto3.client(
     "s3",
     endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
@@ -18,40 +20,62 @@ s3 = boto3.client(
     aws_secret_access_key=R2_SECRET_KEY,
 )
 
-@app.route('/process', methods=['POST'])
-def process_video():
-    if 'video' not in request.files:
-        return "Video bulunamadı", 400
-    
-    video_file = request.files['video']
-    filename = request.form.get("filename", "input_video.mp4")
-    input_path = f"/tmp/{filename}"
-    output_path = f"/tmp/processed_{filename}"
-    
-    video_file.save(input_path)
+def upload_to_r2(file_path, filename):
+    s3.upload_file(
+        file_path,
+        R2_BUCKET,
+        filename,
+        ExtraArgs={"ContentType": "video/mp4"}
+    )
 
-    # FFmpeg işlemi (Örnek: Instagram uyumlu hale getirme)
-    try:
-        subprocess.run([
-            'ffmpeg', '-i', input_path,
-            '-c:v', 'libx264', '-crf', '23', '-preset', 'veryfast',
-            '-c:a', 'aac', '-b:a', '128k',
-            '-y', output_path
-        ], check=True)
-        
-        # R2'ye Yükle
-        s3.upload_file(output_path, R2_BUCKET, filename, ExtraArgs={'ContentType': 'video/mp4'})
-        
-        # Geçici dosyaları sil
-        os.remove(input_path)
-        os.remove(output_path)
-        
-        # R2 Linkini geri döndür
-        public_url = f"https://pub-c84f81986b7843689e2e84205fb8f64c.r2.dev/{filename}"
-        return jsonify({"status": "success", "url": public_url})
+@app.route("/process", methods=["POST"])
+def process():
+    # Make'ten gelen 'file' alanını kontrol et
+    if 'file' not in request.files:
+        return jsonify({"status": "error", "message": "Dosya bulunamadı (file missing)"}), 400
+
+    video_file = request.files['file'] # İşte aradığın kısım burası
     
+    uid = str(uuid.uuid4())
+    input_file = f"/tmp/{uid}_in.mp4"
+    output_file = f"/tmp/{uid}_out.mp4"
+
+    # Dosyayı sunucuya geçici olarak kaydet
+    video_file.save(input_file)
+
+    # Instagram Reels uyumlu FFmpeg komutu
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_file,
+        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+        "-r", "30",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        output_file
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        
+        # İşlenen videoyu R2'ye yükle
+        filename = f"{uid}.mp4"
+        upload_to_r2(output_file, filename)
+
+        # Temizlik: Geçici dosyaları sil
+        if os.path.exists(input_file): os.remove(input_file)
+        if os.path.exists(output_file): os.remove(output_file)
+
+        public_url = f"https://pub-{R2_ACCOUNT_ID}.r2.dev/{filename}"
+        
+        return jsonify({
+            "status": "ok",
+            "public_url": public_url
+        })
+        
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
