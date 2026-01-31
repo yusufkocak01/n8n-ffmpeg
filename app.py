@@ -59,7 +59,13 @@ def upload():
         output_path
     ]
 
-    subprocess.run(ffmpeg_cmd, check=True)
+subprocess.run(
+    ffmpeg_cmd,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    check=True
+)
+
 
     video_url = upload_to_r2(output_path, f"{uid}.mp4")
 
