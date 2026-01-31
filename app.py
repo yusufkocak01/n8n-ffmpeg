@@ -7,13 +7,17 @@ import subprocess
 app = Flask(__name__)
 
 # ----------------------
-# Cloudflare R2 Ayarları
+# Cloudflare R2 Ayarları (Railway env değişkenleri ile uyumlu)
 # ----------------------
-R2_ENDPOINT = os.environ.get("R2_ENDPOINT")         # Örn: https://<account-id>.r2.cloudflarestorage.com
+R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
+R2_BUCKET = os.environ.get("R2_BUCKET")
 R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
-R2_BUCKET = os.environ.get("R2_BUCKET")             # Örn: mybucket
 
+# Endpoint URL Cloudflare R2 formatında
+R2_ENDPOINT = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+# boto3 S3 client
 s3_client = boto3.client(
     "s3",
     endpoint_url=R2_ENDPOINT,
@@ -25,9 +29,12 @@ def upload_to_r2(file_path, key_name):
     """
     Cloudflare R2 /videos klasörüne yükleme
     """
-    r2_key = f"videos/{key_name}"
-    s3_client.upload_file(file_path, R2_BUCKET, r2_key)
-    return f"https://{R2_BUCKET}.{R2_ENDPOINT.replace('https://','')}/{r2_key}"
+    r2_key = key_name  # videos/videos gibi çift path olmaması için sadece dosya adı
+    try:
+        s3_client.upload_file(file_path, R2_BUCKET, r2_key)
+    except Exception as e:
+        raise Exception(f"Failed to upload {file_path} to {R2_BUCKET}/{r2_key}: {str(e)}")
+    return f"https://{R2_BUCKET}.{R2_ACCOUNT_ID}.r2.cloudflarestorage.com/{r2_key}"
 
 # ----------------------
 # Minimal test endpoint
@@ -57,7 +64,7 @@ def process():
 
     try:
         # ----------------------
-        # Opsiyonel: FFmpeg video dönüştürme
+        # Opsiyonel: FFmpeg video dönüştürme (Instagram formatı)
         # ----------------------
         video_cmd = [
             "ffmpeg", "-y", "-i", input_file,
@@ -68,12 +75,12 @@ def process():
         # Opsiyonel: Ses ayırma
         audio_cmd = ["ffmpeg", "-y", "-i", input_file, "-vn", "-acodec", "libmp3lame", output_audio]
 
-        # FFmpeg işlemleri (küçük test videolarıyla önce dene)
+        # FFmpeg işlemleri
         subprocess.run(video_cmd, check=True)
         subprocess.run(audio_cmd, check=True)
 
         # ----------------------
-        # R2 Upload (/videos klasörü)
+        # R2 Upload
         # ----------------------
         video_url = upload_to_r2(output_video, f"{uid}.mp4")
         audio_url = upload_to_r2(output_audio, f"{uid}.mp3")  # Opsiyonel
