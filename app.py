@@ -1,13 +1,11 @@
 import os
 import uuid
+import requests
 from flask import Flask, request, jsonify
 import boto3
 
 app = Flask(__name__)
 
-# -----------------------------
-# R2 Client
-# -----------------------------
 def get_s3():
     return boto3.client(
         "s3",
@@ -16,48 +14,40 @@ def get_s3():
         aws_secret_access_key=os.environ.get("R2_SECRET_KEY"),
     )
 
-# -----------------------------
-# Health Check
-# -----------------------------
 @app.route("/", methods=["GET"])
 def health():
     return "OK", 200
 
-# -----------------------------
-# Upload Endpoint (Doğru yöntem)
-# -----------------------------
-@app.route("/upload", methods=["POST"])
-def upload():
-    if 'file' not in request.files:
-        return jsonify({"error": "file yok"}), 400
+@app.route("/upload-from-url", methods=["POST"])
+def upload_from_url():
+    data = request.json
+    file_url = data.get("file_url")
 
-    file = request.files['file']
+    if not file_url:
+        return jsonify({"error": "file_url yok"}), 400
+
     uid = str(uuid.uuid4())
-
-    # Dosyayı önce diske yaz (kritik)
     temp_path = f"/tmp/{uid}.mp4"
-    file.save(temp_path)
 
-    try:
-        s3 = get_s3()
-        key = f"videos/{uid}.mp4"
+    # Videoyu Railway indiriyor
+    r = requests.get(file_url, stream=True)
+    with open(temp_path, "wb") as f:
+        for chunk in r.iter_content(chunk_size=8192):
+            f.write(chunk)
 
-        # Dosyadan yükle (stream değil)
-        s3.upload_file(
-            temp_path,
-            os.environ.get("R2_BUCKET"),
-            key,
-            ExtraArgs={"ContentType": "video/mp4"}
-        )
+    s3 = get_s3()
+    key = f"videos/{uid}.mp4"
 
-        os.remove(temp_path)
+    s3.upload_file(
+        temp_path,
+        os.environ.get("R2_BUCKET"),
+        key,
+        ExtraArgs={"ContentType": "video/mp4"}
+    )
 
-        url = f"{os.environ.get('R2_PUBLIC_URL')}/{key}"
+    os.remove(temp_path)
 
-        return jsonify({
-            "status": "ok",
-            "url": url
-        })
+    url = f"{os.environ.get('R2_PUBLIC_URL')}/{key}"
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"status": "ok", "url": url})
+
