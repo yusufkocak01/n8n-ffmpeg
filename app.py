@@ -1,17 +1,16 @@
-from flask import Flask, request, jsonify
+import os
 import subprocess
 import requests
-import uuid
-import os
+from flask import Flask, request, jsonify
 import boto3
 
 app = Flask(__name__)
 
 # R2 ayarları
-R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
-R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
-R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
-R2_BUCKET = os.environ.get("R2_BUCKET")
+R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
+R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
+R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
+R2_BUCKET = os.environ["R2_BUCKET"]
 
 s3 = boto3.client(
     "s3",
@@ -20,50 +19,46 @@ s3 = boto3.client(
     aws_secret_access_key=R2_SECRET_KEY,
 )
 
-def upload_to_r2(file_path, filename):
-    s3.upload_file(
-        file_path,
-        R2_BUCKET,
-        filename,
-        ExtraArgs={
-            "ContentType": "video/mp4"
-        }
-    )
-
 @app.route("/process", methods=["POST"])
-def process():
+def process_video():
     data = request.json
     video_url = data["video_url"]
 
-    uid = str(uuid.uuid4())
-    input_file = f"/tmp/{uid}_in.mp4"
-    output_file = f"/tmp/{uid}_out.mp4"
+    input_path = "/tmp/input.mp4"
+    output_path = "/tmp/output.mp4"
 
-    r = requests.get(video_url)
-    with open(input_file, "wb") as f:
-        f.write(r.content)
+    # 1️⃣ Videoyu indir
+    r = requests.get(video_url, stream=True)
+    with open(input_path, "wb") as f:
+        for chunk in r.iter_content(chunk_size=8192):
+            f.write(chunk)
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", input_file,
-        "-vf", "scale=1080:1920",
-        "-r", "30",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
+    # 2️⃣ FFmpeg işlemi
+    subprocess.run([
+        "ffmpeg",
+        "-y",
+        "-i", input_path,
         "-movflags", "+faststart",
-        output_file
-    ]
+        "-vf", "scale=1280:-2",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
+        "-c:a", "aac",
+        output_path
+    ], check=True)
 
-    subprocess.run(cmd, check=True)
+    # 3️⃣ R2’ye yükle
+    filename = "processed-video.mp4"
+    s3.upload_file(
+        output_path,
+        R2_BUCKET,
+        filename,
+        ExtraArgs={"ContentType": "video/mp4"}
+    )
 
-    filename = f"{uid}.mp4"
-    upload_to_r2(output_file, filename)
-
-    public_url = f"https://pub-{R2_ACCOUNT_ID}.r2.dev/{filename}"
+    public_url = f"https://pub-xxxx.r2.dev/{filename}"
 
     return jsonify({
         "status": "ok",
-        "url": public_url
+        "video_url": public_url
     })
-
-app.run(host="0.0.0.0", port=8080)
