@@ -1,16 +1,14 @@
-FROM node:20-bookworm
+FROM python:3.11-slim
 
-# sistem paketleri
-RUN apt-get update && \
-    apt-get install -y ffmpeg curl && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# FFmpeg kur
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
-# n8n kur
-RUN npm install -g n8n
+WORKDIR /app
 
-# n8n port
-EXPOSE 5678
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# start
-CMD ["n8n"]
+COPY app.py .
+
+EXPOSE 8080
+CMD ["python", "app.py"]
