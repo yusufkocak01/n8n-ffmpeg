@@ -3,18 +3,14 @@ import subprocess
 import requests
 from flask import Flask, request, jsonify
 import boto3
-import time
 
 app = Flask(__name__)
 
-# R2 ayarları (Railway Environment Variables üzerinden gelir)
+# R2 ayarları
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 R2_BUCKET = os.environ["R2_BUCKET"]
-
-# Senin paylaştığın sabit logo linkin
-LOGO_URL = "https://pub-c84f81986b7843689e2e84205fb8f64c.r2.dev/adana-kanali.png"
 
 s3 = boto3.client(
     "s3",
@@ -37,28 +33,22 @@ def process_video():
         for chunk in r.iter_content(chunk_size=8192):
             f.write(chunk)
 
-    # 2️⃣ FFmpeg işlemi: Boyutlandırma ve Orta-Alt Logo Overlay
-    # [0:v] ana video, [1:v] logoyu temsil eder. 
-    # (W-w)/2 yatayda ortalar, H-h-40 dikeyde alttan 40px boşluk bırakır.
-    try:
-        subprocess.run([
-            "ffmpeg",
-            "-y",
-            "-i", input_path,
-            "-i", LOGO_URL,
-            "-filter_complex", "[0:v]scale=1280:-2[v];[v][1:v]overlay=(W-w)/2:H-h-40",
-            "-movflags", "+faststart",
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            "-c:a", "aac",
-            output_path
-        ], check=True)
-    except subprocess.CalledProcessError as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    # 2️⃣ FFmpeg işlemi (Logo İptal Edildi, Sadece Sıkıştırma ve Hızlı Başlatma)
+    subprocess.run([
+        "ffmpeg",
+        "-y",
+        "-i", input_path,
+        "-movflags", "+faststart",
+        "-vf", "scale=1280:-2",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",
+        "-c:a", "aac",
+        output_path
+    ], check=True)
 
-    # 3️⃣ R2’ye yükle (Dosya adını her seferinde benzersiz yapıyoruz ki Instagram eski videoyu göstermesin)
-    filename = f"video-{int(time.time())}.mp4"
+    # 3️⃣ R2’ye yükle (Sabit isimle geri dönüyoruz)
+    filename = "processed-video.mp4"
     s3.upload_file(
         output_path,
         R2_BUCKET,
