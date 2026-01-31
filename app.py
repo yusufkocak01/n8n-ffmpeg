@@ -10,7 +10,7 @@ R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
 R2_BUCKET = os.environ.get("R2_BUCKET")
 R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
 R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
-R2_PUBLIC_URL = os.environ.get("R2_PUBLIC_URL")  # pub-xxxx.r2.dev
+R2_PUBLIC_URL = os.environ.get("R2_PUBLIC_URL")
 
 R2_ENDPOINT = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
@@ -28,7 +28,6 @@ def upload_to_r2(file_path, key):
             Key=f"videos/{key}",
             Body=f,
             ContentType="video/mp4",
-            ACL="public-read"
         )
     return f"{R2_PUBLIC_URL}/videos/{key}"
 
@@ -41,4 +40,33 @@ def upload():
     uid = str(uuid.uuid4())
 
     input_path = f"/tmp/{uid}_in.mp4"
-    output_path = f"/tmp/{ui_
+    output_path = f"/tmp/{uid}.mp4"
+
+    file.save(input_path)
+
+    ffmpeg_cmd = [
+        "ffmpeg","-y","-i",input_path,
+        "-vf","scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+        "-c:v","libx264",
+        "-profile:v","high",
+        "-level","4.2",
+        "-pix_fmt","yuv420p",
+        "-movflags","+faststart",
+        "-preset","veryfast",
+        "-crf","23",
+        "-c:a","aac",
+        "-b:a","128k",
+        output_path
+    ]
+
+    subprocess.run(ffmpeg_cmd, check=True)
+
+    video_url = upload_to_r2(output_path, f"{uid}.mp4")
+
+    os.remove(input_path)
+    os.remove(output_path)
+
+    return jsonify({
+        "status": "ok",
+        "url": video_url
+    })
