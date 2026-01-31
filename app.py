@@ -30,7 +30,14 @@ def upload_to_r2(file_path, key_name):
     return f"https://{R2_BUCKET}.{R2_ENDPOINT.replace('https://','')}/{r2_key}"
 
 # ----------------------
-# Flask Endpoint
+# Minimal test endpoint
+# ----------------------
+@app.route("/test", methods=["POST"])
+def test():
+    return jsonify({"status": "ok"})
+
+# ----------------------
+# Ana video işleme endpoint
 # ----------------------
 @app.route("/process", methods=["POST"])
 def process():
@@ -50,7 +57,7 @@ def process():
 
     try:
         # ----------------------
-        # 1️⃣ Opsiyonel: FFmpeg video dönüştürme (Instagram, boyut vs.)
+        # Opsiyonel: FFmpeg video dönüştürme
         # ----------------------
         video_cmd = [
             "ffmpeg", "-y", "-i", input_file,
@@ -58,28 +65,28 @@ def process():
             "-c:v", "libx264", "-pix_fmt", "yuv420p", output_video
         ]
         
-        # 2️⃣ Opsiyonel: Ses ayırma
+        # Opsiyonel: Ses ayırma
         audio_cmd = ["ffmpeg", "-y", "-i", input_file, "-vn", "-acodec", "libmp3lame", output_audio]
 
-        # Küçük test videoları ile çalıştır
+        # FFmpeg işlemleri (küçük test videolarıyla önce dene)
         subprocess.run(video_cmd, check=True)
         subprocess.run(audio_cmd, check=True)
 
         # ----------------------
-        # 3️⃣ R2 Upload (/videos klasörü)
+        # R2 Upload (/videos klasörü)
         # ----------------------
         video_url = upload_to_r2(output_video, f"{uid}.mp4")
         audio_url = upload_to_r2(output_audio, f"{uid}.mp3")  # Opsiyonel
 
         # ----------------------
-        # 4️⃣ Geçici dosyaları temizle
+        # Geçici dosyaları temizle
         # ----------------------
         for f in [input_file, output_video, output_audio]:
             if os.path.exists(f):
                 os.remove(f)
 
         # ----------------------
-        # 5️⃣ JSON Response
+        # JSON Response
         # ----------------------
         return jsonify({
             "status": "ok",
@@ -93,8 +100,7 @@ def process():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # ----------------------
-# Flask production-ready run (Gunicorn için)
+# Flask production-ready run (lokal test için)
 # ----------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
-
