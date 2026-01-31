@@ -1,81 +1,43 @@
-from flask import Flask, request, jsonify
-import subprocess
-import uuid
-import os
-import boto3
-
-app = Flask(__name__)
-
-# Railway Variables kısmına girdiğin R2 bilgileri
-R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
-R2_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY")
-R2_SECRET_KEY = os.environ.get("R2_SECRET_KEY")
-R2_BUCKET = os.environ.get("R2_BUCKET")
-
-# Cloudflare R2 Bağlantısı
-s3 = boto3.client(
-    "s3",
-    endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
-    aws_access_key_id=R2_ACCESS_KEY,
-    aws_secret_access_key=R2_SECRET_KEY,
-)
-
-def upload_to_r2(file_path, filename):
-    s3.upload_file(
-        file_path,
-        R2_BUCKET,
-        filename,
-        ExtraArgs={"ContentType": "video/mp4"}
-    )
+# ... (önceki importlar aynı kalacak)
 
 @app.route("/process", methods=["POST"])
 def process():
-    # Make'ten gelen 'file' alanını kontrol et
     if 'file' not in request.files:
-        return jsonify({"status": "error", "message": "Dosya bulunamadı (file missing)"}), 400
+        return jsonify({"status": "error", "message": "Dosya yok"}), 400
 
-    video_file = request.files['file'] # İşte aradığın kısım burası
-    
+    video_file = request.files['file']
     uid = str(uuid.uuid4())
     input_file = f"/tmp/{uid}_in.mp4"
-    output_file = f"/tmp/{uid}_out.mp4"
+    output_video = f"/tmp/{uid}_out.mp4"
+    output_audio = f"/tmp/{uid}_out.mp3" # Ses dosyası yolu
 
-    # Dosyayı sunucuya geçici olarak kaydet
     video_file.save(input_file)
 
-    # Instagram Reels uyumlu FFmpeg komutu
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", input_file,
+    # 1. Instagram için Videoyu İşle
+    video_cmd = [
+        "ffmpeg", "-y", "-i", input_file,
         "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
-        "-r", "30",
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        output_file
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", output_video
     ]
+    
+    # 2. Ses Dosyasını Ayır (Sadece Ses)
+    audio_cmd = ["ffmpeg", "-y", "-i", input_file, "-vn", "-acodec", "libmp3lame", output_audio]
 
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(video_cmd, check=True)
+        subprocess.run(audio_cmd, check=True)
         
-        # İşlenen videoyu R2'ye yükle
-        filename = f"{uid}.mp4"
-        upload_to_r2(output_file, filename)
+        # R2'ye ikisini de yükle
+        upload_to_r2(output_video, f"{uid}.mp4")
+        upload_to_r2(output_audio, f"{uid}.mp3")
 
-        # Temizlik: Geçici dosyaları sil
-        if os.path.exists(input_file): os.remove(input_file)
-        if os.path.exists(output_file): os.remove(output_file)
+        # Temizlik
+        os.remove(input_file); os.remove(output_video); os.remove(output_audio)
 
-        public_url = f"https://pub-{R2_ACCOUNT_ID}.r2.dev/{filename}"
-        
         return jsonify({
             "status": "ok",
-            "public_url": public_url
+            "video_url": f"https://pub-{R2_ACCOUNT_ID}.r2.dev/{uid}.mp4",
+            "audio_url": f"https://pub-{R2_ACCOUNT_ID}.r2.dev/{uid}.mp3" # Yeni ses linki
         })
-        
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
