@@ -1,59 +1,35 @@
-import os
-import subprocess
-import requests
+import os, subprocess, requests, boto3
 from flask import Flask, request, jsonify
-import boto3
 
 app = Flask(__name__)
 
-# R2 ayarları
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY = os.environ["R2_ACCESS_KEY"]
 R2_SECRET_KEY = os.environ["R2_SECRET_KEY"]
 R2_BUCKET = os.environ["R2_BUCKET"]
 
-s3 = boto3.client(
-    "s3",
-    endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
-    aws_access_key_id=R2_ACCESS_KEY,
-    aws_secret_access_key=R2_SECRET_KEY,
-)
+s3 = boto3.client("s3", endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+                  aws_access_key_id=R2_ACCESS_KEY, aws_secret_access_key=R2_SECRET_KEY)
 
 @app.route("/process", methods=["POST"])
 def process_video():
-    data = request.json
-    video_url = data["video_url"]
+    video_url = request.json["video_url"]
+    input_p, output_p = "/tmp/input.mp4", "/tmp/output.mp4"
 
-    input_path = "/tmp/input.mp4"
-    output_path = "/tmp/output.mp4"
-
-    # 1️⃣ Videoyu indir
+    # Videoyu indir
     r = requests.get(video_url, stream=True)
-    with open(input_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            f.write(chunk)
+    with open(input_p, "wb") as f:
+        for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
 
-    # 2️⃣ FFmpeg işlemi (Logosuz, Sadece Sıkıştırma)
-    subprocess.run([
-        "ffmpeg",
-        "-y",
-        "-i", input_path,
-        "-movflags", "+faststart",
-        "-vf", "scale=1280:-2",
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
-        "-c:a", "aac",
-        output_path
-    ], check=True)
+    # FFmpeg işlemi (LOGO İPTAL - SADECE SIKIŞTIRMA)
+    subprocess.run(["ffmpeg", "-y", "-i", input_p, "-movflags", "+faststart", 
+                    "-vf", "scale=1280:-2", "-c:v", "libx264", "-preset", "fast", 
+                    "-crf", "23", "-c:a", "aac", output_p], check=True)
 
-    # 3️⃣ R2’ye yükle
-    filename = "processed-video.mp4"
-    s3.upload_file(output_path, R2_BUCKET, filename, ExtraArgs={"ContentType": "video/mp4"})
-
-    public_url = f"https://pub-c84f81986b7843689e2e84205fb8f64c.r2.dev/{filename}"
-
-    return jsonify({"status": "ok", "video_url": public_url})
+    # R2’ye yükle
+    s3.upload_file(output_p, R2_BUCKET, "processed-video.mp4", ExtraArgs={"ContentType": "video/mp4"})
+    
+    return jsonify({"status": "ok", "video_url": f"https://pub-c84f81986b7843689e2e84205fb8f64c.r2.dev/processed-video.mp4"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
